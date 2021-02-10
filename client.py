@@ -8,9 +8,9 @@
 
 # Response protocal
 # {
-#     "sender": "chat" | "server""
+#     "sender": "room:all" | "server" | [username],
 #     "status": "success" | "fail"
-#     "task": str,
+#     "task": "chat" | "r" | "u" | "q" | "t",,
 #     "time": float,
 #     "data": str
 # }
@@ -24,7 +24,7 @@ import re
 from urllib import parse
 
 
-RECV_BUFFER = 4
+RECV_BUFFER = 4096
 PROTO_PREFIX = "chat://chatSever?"
 SOCK_LIST = [sys.stdin]
 
@@ -44,6 +44,7 @@ def prompt():
 
 
 def req_proto(target, task, message):
+    # create a response protocol dict
     proto = {
         "target": target,
         "task": task,
@@ -54,10 +55,13 @@ def req_proto(target, task, message):
 
 
 def encode_url(req_proto):
+    # encode dict to chat:// protocol string
+    # NUL denotes as End Of String
     return PROTO_PREFIX + parse.urlencode(req_proto) + "NUL"
 
 
 def decode_url(resp_url):
+    # decode a chat:// protocol string to dict
     resp_url = resp_url.replace("NUL", "")
     resp = dict(parse.parse_qsl(parse.urlsplit(resp_url).query))
     resp["time"] = float(resp["time"])
@@ -65,6 +69,8 @@ def decode_url(resp_url):
 
 
 def recvall(sock):
+    # Safely receive and concatenate all bytes stream
+    # and return decoded dict request structure
     recv = bytes()
     while True:
         r, _, _ = select.select([sock], [], [])
@@ -77,7 +83,13 @@ def recvall(sock):
 
 
 def send(sock, target, raw_message):
+    # parse and send a message
+
     mat_res = re.match(r'^:([u|r|q|t])\s?(.*)$', raw_message)
+    # :u                    ** Fetch all clients name> **
+    # :q                    ** Close connection and quit **
+    # :r <new_name>         ** Rename current client **
+    # :t <target_username>  ** Send msg to target user **
     if mat_res:
         opt, val = mat_res.group(1), mat_res.group(2)
         req = encode_url(req_proto("server", opt, val)).encode()
@@ -91,54 +103,57 @@ def send(sock, target, raw_message):
         sock.send(req)
 
 
-def close_sock(sock, msg, code=0):
+def close_sock(sock, msg):
+    # safely close a sock and remove it
     sock.close()
-    SOCK_LIST.remove(sock)
+    if sock in SOCK_LIST:
+        SOCK_LIST.remove(sock)
     sys.stdout.write("\r%s\n" % msg)
-    exit(code)
+    exit()
 
 
-def main():
+if __name__ == "__main__":
     usr_name = input("Input username: ")
-    msg = ""
-    target = "room:all"
+    target = "room:all"  # enter global chat room by default
+
+    # Initialise a client socket
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(2)
     SOCK_LIST.append(s)
 
     try:
+        # Connect to server and send username and default target
         s.connect((SERVER_IP, PORT))
         send(s, 'server', ":r %s" % usr_name)
         select.select([s, sys.stdin], [], [])
         send(s, 'server', ":t %s" % target)
     except:
-        close_sock(s, "Unable to connect. Che")
+        close_sock(s, "Unable to connect.")
+
     prompt()
     while True:
         try:
-            r, _, _ = select.select(
-                SOCK_LIST, [], [])
-
+            r, _, _ = select.select(SOCK_LIST, [], [])
             for sock in r:
+                # if client socket is readable -> incomming data
                 if sock == s:
                     recv = recvall(sock)
-                    msg = recv['data']
+                    msg = recv['message']
                     if recv['status'] == "success":
+                        # Server tasks success. Update local variable
                         if recv['task'] == 't':
-                            msg = "\rYou are now chatting with %s.\n" % recv['data']
-                            target = recv['data']
+                            msg = "\rYou are now chatting with %s.\n" % recv['message']
+                            target = recv['message']
                         elif recv['task'] == 'r':
-                            msg = "\rYour username is %s.\n" % recv['data']
-                            usr_name = recv['data']
+                            msg = "\rYour username is %s.\n" % recv['message']
+                            usr_name = recv['message']
+                    # Display any msg from server
                     sys.stdout.write(msg)
                     prompt()
                 else:
+                    # stdin is readable -> send
                     msg = sys.stdin.readline()
                     send(s, target, msg)
                     prompt()
         except:
             close_sock(s, "Connection is closed by chat server.")
-
-
-if __name__ == "__main__":
-    main()

@@ -8,9 +8,9 @@
 
 # Response protocal
 # {
-#     "sender": "chat" | "server""
+#     "sender": "room:all" | "server" | [username],
 #     "status": "success" | "fail"
-#     "task": str,
+#     "task": "chat" | "r" | "u" | "q" | "t",,
 #     "time": float,
 #     "data": str
 # }
@@ -33,41 +33,47 @@ class ChatError(Exception):
 
 SERVER_IP = "127.0.0.1"
 SOCK_LIST = []
-RECV_BUFFER = 4
-USER_NAMES = {}
+RECV_BUFFER = 4096
+USER_NAMES = {
+    # [sock] : [username]
+}
 PROTO_PREFIX = "chat://chatSever?"
-server_socket = None
 
 try:
     PORT = int(sys.argv[1])
 except:
     print("Incorrect cmd args. Try: python server.py [port]")
-    exit(1)
+    exit()
 
 
 def encode_url(req_proto):
+    # encode dict to chat:// protocol string
+    # NUL denotes as End Of String
     return PROTO_PREFIX + parse.urlencode(req_proto) + "NUL"
 
 
 def decode_url(resp_url):
+    # decode a chat:// protocol string to dict
     resp_url = resp_url.replace("NUL", "")
     resp = dict(parse.parse_qsl(parse.urlsplit(resp_url).query))
     resp["time"] = float(resp["time"])
     return resp
 
 
-def resp_proto(sender, status, task, data=None):
+def resp_proto(sender, status, task, message):
+    # create a response protocol dict
     proto = {
         "sender": sender,
         "status": status,
         "task": task,
-        "data": data,
+        "message": message,
         "time": time.time()
     }
     return proto
 
 
 def broadcast_one(sock, sender, status, task, message):
+    # broadcast to one client
     for socket in SOCK_LIST:
         if socket == sock:
             resp = encode_url(resp_proto(
@@ -76,6 +82,7 @@ def broadcast_one(sock, sender, status, task, message):
 
 
 def broadcast_all(sock, sender, status, message):
+    # broadcast to one client
     resp = encode_url(resp_proto(
         sender, status, "chat", message)).encode()
 
@@ -85,13 +92,16 @@ def broadcast_all(sock, sender, status, message):
 
 
 def close_sock(sock):
+    # safely close a sock and remove it
     sock.close()
-    SOCK_LIST.remove(sock)
+    if sock in SOCK_LIST:
+        SOCK_LIST.remove(sock)
     if sock in USER_NAMES.keys():
         USER_NAMES.pop(sock)
 
 
 def list_clients(sock):
+    # list out all clients
     sys.stdout.write("Client %s request all current users.\n" %
                      USER_NAMES[sock])
     message = "\rCurrent online users:\n%s\n" % "\n".join(USER_NAMES.values())
@@ -99,6 +109,10 @@ def list_clients(sock):
 
 
 def target(sock, username):
+    # server task :t
+    # check if client can chat with an another user
+    # broadcast username (if exist) back to the client
+    # else broadcast an error msg to the client
     if username not in list(USER_NAMES.values()) + ["room:all"]:
         msg = "\rUser %s is not existed.\n" % username
         sys.stdout.write(
@@ -111,13 +125,18 @@ def target(sock, username):
 
 
 def username(sock, username):
-    msg = ""
+    # server task :t
+    # check if client can rename
+    # broadcast new username (if could) back to the client
+    # else broadcast an error msg to the client
+
+    # New connetion
     if sock not in USER_NAMES.keys() and username not in USER_NAMES.values():
         msg = "\r%s has joined.\n" % username
         USER_NAMES[sock] = username
         broadcast_all(sock, "server", "success", msg)
         broadcast_one(sock, "server", "success", 'r', USER_NAMES[sock])
-
+    # Username in used
     elif username in USER_NAMES.values():
         if sock not in USER_NAMES.keys():
             msg = "\rUsername %s in used. New connection reject.\n" % username
@@ -126,6 +145,7 @@ def username(sock, username):
         else:
             msg = "\rUsername %s in used. Try a new name.\n" % username
             broadcast_one(sock, "server", "fail", 'r', msg)
+    # Can update username
     else:
         msg = "\r%s has renamed to %s.\n" % (USER_NAMES[sock], username)
         USER_NAMES[sock] = username
@@ -136,11 +156,14 @@ def username(sock, username):
 
 
 def get_sock_by_username(username):
+    # get a socket instance by its username (if exist)
     usr_index = list(USER_NAMES.values()).index(username)
     return list(USER_NAMES.keys())[usr_index]
 
 
 def recvall(sock):
+    # Safely receive and concatenate all bytes stream
+    # and return decoded dict request structure
     recv = bytes()
     while True:
         r, _, _ = select.select([sock], [], [])
@@ -150,31 +173,30 @@ def recvall(sock):
                             USER_NAMES[sock])
         recv += part_recv
         if recv.decode().startswith(PROTO_PREFIX) and recv.decode().endswith("NUL"):
-            return recv
+            return decode_url(recv.decode())
 
 
-def main():
-    global server_socket
+if __name__ == "__main__":
+    # Initialise a TCP socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((SERVER_IP, PORT))
-    server_socket.listen(10)
-
+    server_socket.listen(10)    # listen up to 10 clients
     SOCK_LIST.append(server_socket)
-
     sys.stdout.write("Chat server started on port %d\n" % PORT)
     while True:
         try:
-            r, _, _ = select.select(
-                SOCK_LIST, [], [])
-
+            r, _, _ = select.select(SOCK_LIST, [], [])
             for sock in r:
+                # Server socket is readable -> accept a new client connection
                 if sock == server_socket:
                     sockfd, addr = server_socket.accept()
                     SOCK_LIST.append(sockfd)
+                # A client socket is readable -> incomming data
                 else:
                     try:
-                        recv = decode_url(recvall(sock).decode())
+                        recv = recvall(sock)
+                        # Message broadcast to whole chat room
                         if recv['target'] == 'room:all':
                             listener = "all"
                             message = "\r<%s> %s" % (
@@ -182,6 +204,7 @@ def main():
                             broadcast_all(sock, "room:all", "success", message)
                             sys.stdout.write(
                                 "Client %s broadcasted a message to all.\n" % USER_NAMES[sock])
+                        # Message broadcast to a user
                         elif recv['target'] in USER_NAMES.values():
                             message = "\r<%s> %s" % (
                                 USER_NAMES[sock], recv['message'])
@@ -190,17 +213,24 @@ def main():
                                 target_sock, recv['target'], "success", "chat", message)
                             sys.stdout.write(
                                 "Client %s broadcasted a message to %s.\n" % (USER_NAMES[sock], USER_NAMES[target_sock]))
+                        # Request a server task
                         elif recv['target'] == 'server':
+                            # Rename client
                             if recv['task'] == "r":
                                 username(sock, recv['message'])
+                            # List all current users
                             elif recv['task'] == 'u':
                                 list_clients(sock)
+                            # Close client connection
                             elif recv['task'] == 'q':
                                 raise ChatError("")
+                            # Choose a target user to send message
                             elif recv['task'] == 't':
                                 target(sock, recv['message'])
 
                     except Exception as e:
+                        # Any error here will cause a client go down
+                        # The server remains functionailty
                         if isinstance(e, ChatError):
                             msg = str(e).replace("\r", "")
                             sys.stdout.write(msg)
@@ -210,11 +240,9 @@ def main():
                             broadcast_all(sock, "server", "success", message)
                         close_sock(sock)
         except:
+            # Any error here will cause the server go down
+            # Close as many socket connection as possible
             sys.stdout.write("Close all sockets. Close the server\n")
             for sock in SOCK_LIST:
-                sock.close()
+                close_sock(sock)
             exit()
-
-
-if __name__ == "__main__":
-    main()
