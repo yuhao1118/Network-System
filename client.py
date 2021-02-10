@@ -104,10 +104,10 @@ def main():
     target = "room:all"
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(2)
+    SOCK_LIST.append(s)
 
     try:
         s.connect((SERVER_IP, PORT))
-        SOCK_LIST.append(s)
         send(s, 'server', ":r %s" % usr_name)
         select.select([s, sys.stdin], [], [])
         send(s, 'server', ":t %s" % target)
