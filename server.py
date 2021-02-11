@@ -3,7 +3,7 @@
 #     "target": "room:all" | "server" | [username],
 #     "task": "chat" | "r" | "u" | "q" | "t",
 #     "time": float,
-#     "message": str
+#     "message"?: str
 # }
 
 # Response protocal
@@ -12,7 +12,7 @@
 #     "status": "success" | "fail"
 #     "task": "chat" | "r" | "u" | "q" | "t",,
 #     "time": float,
-#     "data": str
+#     "message": str
 # }
 
 
@@ -27,13 +27,14 @@ class ChatError(Exception):
     def __init__(self, msg):
         self.msg = msg
 
-    def __str__(self):
-        return str(self.msg)
+    def __repr__(self):
+        return str(self.msg).replace("\r", "").replace("\n", "")
 
 
 SERVER_IP = "127.0.0.1"
 SOCK_LIST = []
 RECV_BUFFER = 4096
+RECV_TIMEOUT = 5
 USER_NAMES = {
     # [sock] : [username]
 }
@@ -42,7 +43,7 @@ PROTO_PREFIX = "chat://chatSever?"
 try:
     PORT = int(sys.argv[1])
 except:
-    print("Incorrect cmd args. Try: python server.py [port]")
+    print("Incorrect cmd args. Usage: python3 server.py [port]")
     exit()
 
 
@@ -56,6 +57,9 @@ def decode_url(resp_url):
     # decode a chat:// protocol string to dict
     resp_url = resp_url.replace("NUL", "")
     resp = dict(parse.parse_qsl(parse.urlsplit(resp_url).query))
+    for i in ["target", "task", "time"]:
+        if i not in resp.keys():
+            raise KeyError("Key %s is required in protocol." % i)
     resp["time"] = float(resp["time"])
     return resp
 
@@ -143,8 +147,10 @@ def username(sock, username):
             broadcast_one(sock, "server", "fail", 'r', msg)
             raise ChatError(msg)
         else:
-            msg = "\rUsername %s in used. Try a new name.\n" % username
-            broadcast_one(sock, "server", "fail", 'r', msg)
+            msg = "\r%s failed to rename. Username %s in used. Try a new name.\n" % (
+                USER_NAMES[sock], username)
+            bd_msg = "\rFailed to rename. Username %s in used. Try a new name.\n" % username
+            broadcast_one(sock, "server", "fail", 'r', bd_msg)
     # Can update username
     else:
         msg = "\r%s has renamed to %s.\n" % (USER_NAMES[sock], username)
@@ -163,9 +169,12 @@ def get_sock_by_username(username):
 
 def recvall(sock):
     # Safely receive and concatenate all bytes stream
-    # and return decoded dict request structure
+    # and return decoded dict (if could) request structure
+    # else if protocol is illegal, raise an error after TIMEOUT
+    # seconds
+    start_time = time.time()
     recv = bytes()
-    while True:
+    while time.time() - start_time <= RECV_TIMEOUT:
         r, _, _ = select.select([sock], [], [])
         part_recv = sock.recv(RECV_BUFFER)
         if not part_recv:
@@ -174,6 +183,7 @@ def recvall(sock):
         recv += part_recv
         if recv.decode().startswith(PROTO_PREFIX) and recv.decode().endswith("NUL"):
             return decode_url(recv.decode())
+    raise ChatError("\rIllgeal protocol.")
 
 
 if __name__ == "__main__":
@@ -223,7 +233,8 @@ if __name__ == "__main__":
                                 list_clients(sock)
                             # Close client connection
                             elif recv['task'] == 'q':
-                                raise ChatError("")
+                                raise ChatError(
+                                    "Client %s quit normally." % USER_NAMES[sock])
                             # Choose a target user to send message
                             elif recv['task'] == 't':
                                 target(sock, recv['message'])
@@ -231,9 +242,9 @@ if __name__ == "__main__":
                     except Exception as e:
                         # Any error here will cause a client go down
                         # The server remains functionailty
-                        if isinstance(e, ChatError):
-                            msg = str(e).replace("\r", "")
-                            sys.stdout.write(msg)
+                        msg = repr(e) + "\n"
+                        sys.stdout.write(msg)
+                        sys.stdout.flush()
                         if sock in USER_NAMES.keys():
                             message = "\r%s has left.\n" % USER_NAMES[sock]
                             sys.stdout.write(message.replace("\r", ""))
@@ -242,7 +253,7 @@ if __name__ == "__main__":
         except:
             # Any error here will cause the server go down
             # Close as many socket connection as possible
-            sys.stdout.write("Close all sockets. Close the server\n")
+            sys.stdout.write("Close all sockets. Close the server.\n")
             for sock in SOCK_LIST:
                 close_sock(sock)
             exit()

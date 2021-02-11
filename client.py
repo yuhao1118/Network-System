@@ -3,7 +3,7 @@
 #     "target": "room:all" | "server" | [username],
 #     "task": "chat" | "r" | "u" | "q" | "t",
 #     "time": float,
-#     "message": str
+#     "message"?: str
 # }
 
 # Response protocal
@@ -12,7 +12,7 @@
 #     "status": "success" | "fail"
 #     "task": "chat" | "r" | "u" | "q" | "t",,
 #     "time": float,
-#     "data": str
+#     "message": str
 # }
 
 
@@ -24,7 +24,16 @@ import re
 from urllib import parse
 
 
+class ChatError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __repr__(self):
+        return str(self.msg).replace("\r", "").replace("\n", "")
+
+
 RECV_BUFFER = 4096
+RECV_TIMEOUT = 5
 PROTO_PREFIX = "chat://chatSever?"
 SOCK_LIST = [sys.stdin]
 
@@ -34,8 +43,8 @@ try:
     SERVER_IP = sys.argv[1]
     PORT = int(sys.argv[2])
 except:
-    print("Incorrect cmd args. Try: python client.py [host] [port]")
-    exit(1)
+    print("Incorrect cmd args. Usage: python3 client.py [host] [port]")
+    exit()
 
 
 def prompt():
@@ -64,28 +73,34 @@ def decode_url(resp_url):
     # decode a chat:// protocol string to dict
     resp_url = resp_url.replace("NUL", "")
     resp = dict(parse.parse_qsl(parse.urlsplit(resp_url).query))
+    keyset = set(["sender", "status", "task", "time", "message"])
+    if keyset != set(resp.keys()):
+        raise KeyError("Missing or redundant keys in % s" % str(resp.keys()))
     resp["time"] = float(resp["time"])
     return resp
 
 
 def recvall(sock):
     # Safely receive and concatenate all bytes stream
-    # and return decoded dict request structure
+    # and return decoded dict (if could) else if protocol
+    # is illegal, raise an error after TIMEOUT seconds
+    start_time = time.time()
     recv = bytes()
-    while True:
+    while time.time() - start_time <= RECV_TIMEOUT:
         r, _, _ = select.select([sock], [], [])
         part_recv = sock.recv(RECV_BUFFER)
         if not part_recv:
-            raise Exception
+            raise ChatError("Server connetion lost.\n")
         recv += part_recv
         if recv.decode().startswith(PROTO_PREFIX) and recv.decode().endswith("NUL"):
             return decode_url(recv.decode())
+    raise ChatError("\rIllgeal protocol.")
 
 
 def send(sock, target, raw_message):
     # parse and send a message
-
-    mat_res = re.match(r'^:([u|r|q|t])\s?(.*)$', raw_message)
+    strip_message = raw_message.strip()
+    mat_res = re.match(r'^:([u|r|q|t])\s?(.*)$', strip_message)
     # :u                    ** Fetch all clients name> **
     # :q                    ** Close connection and quit **
     # :r <new_name>         ** Rename current client **
@@ -155,5 +170,9 @@ if __name__ == "__main__":
                     msg = sys.stdin.readline()
                     send(s, target, msg)
                     prompt()
-        except:
-            close_sock(s, "Connection is closed by chat server.")
+        except (KeyboardInterrupt, KeyError, ChatError) as e:
+            if (isinstance(e, ChatError)):
+                msg = "\r" + repr(e) + "\n"
+                sys.stdout.write(msg)
+                sys.stdout.flush()
+            close_sock(s, "Connection is closed.")

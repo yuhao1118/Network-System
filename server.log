@@ -1,0 +1,22 @@
+Chat server started on port 8888
+user_a has joined.
+Client user_a are now chatting with room:all.
+user_b has joined.
+Client user_b are now chatting with room:all.
+user_c has joined.
+Client user_c are now chatting with room:all.
+Client user_a broadcasted a message to all.
+Client user_b broadcasted a message to all.
+Client user_c broadcasted a message to all.
+Client user_a request all current users.
+Client user_a are now chatting with user_c.
+Client user_a broadcasted a message to user_c.
+user_a failed to rename. Username user_c in used. Try a new name.
+user_a has renamed to user_A.
+Client user_A quit normally.
+user_A has left.
+Client user_b quit normally.
+user_b has left.
+Client user_c connection lost.
+user_c has left.
+Close all sockets. Close the server.

@@ -1,0 +1,68 @@
+Protocol Documentation
+
+
+General Protocol:
+Format: chat://chatSever?{query}NUL
+The general protocol is a string that starts with a prefix "chat://chatServer?" and end with "NUL". Any message being send from/to the server should implement this protocol. This string protocol should be encoded as a bytes array to be transmitted via sockets. When transmitting messages, request and response parameters should be encoded in {query}. See next section for more details.
+
+Request/Response protocol:
+Request and Response protocols are in dictionary format and can be encoded as a url parameter string. This parameter string will fill {query} part to complete the general protocol.
+    1. Request protocol. A protocol that a client could send to server.
+        {
+            "target": "room:all" | "server" | [username],         # The targets who can receive tasks or messages from server
+            "task": "chat" | "r" | "u" | "q" | "t",               # Tasks to be performed on the target
+            "time": float,                                        # Seconds since Unix epoch time
+            "message"?: str                                       # (Optional) message to be sent to a target
+        }
+        The following example demonstrates sending a greeting message to client "XXX":
+            Raw:  {
+                    "target": "XXX",
+                    "task": "chat",
+                    "time": 1234567.123,
+                    "message": "Hello world"
+                }
+            Encoded: 'target=XXX&task=chat&time=1234567.123&message=Hello+world'
+            Whole: 'chat://chatSever?target=XXX&task=chat&time=1234567.123&message=Hello+worldNUL'
+
+    2. Response protocol. A protocol that a server could response to a client.
+        {
+            "sender": "room:all" | "server" | [username],         # The sender who send a message
+            "status": "success" | "fail",                         # Detailing a request task is succeed or failed
+            "task": "chat" | "r" | "u" | "q" | "t",               # Tasks being performed (by the sender)
+            "time": float,                                        # Seconds since Unix epoch time
+            "message": str                                        # message to be sent to a client
+        }
+        The following example demonstrates a server successfully executed task "r" and response to a client:
+            Raw:  {
+                    "sender": "server",
+                    "status": "success",
+                    "task": "r",
+                    "time": 1234568.123,
+                    "message": "NEW_USERNAME"
+                }
+            Encoded: 'sender=server&status=success&task=r&time=1234568.123&message=NEW_USERNAME'
+            Whole: 'chat://chatSever?sender=server&status=success&task=r&time=1234568.123&message=NEW_USERNAMEdNUL'
+
+Targets and Tasks:
+A target is an endpoint in which a message could flow to. A task is a sequence of actions to be performed on a target. When a server is initialised, at least two targets will exist:
+1. "room:all"       # global chat room
+2. "server"         # chat server
+
+    The target task map is as follow:
+        "room:all" | [username] => "chat"           # chat messages should only be broadcasted to "room:all" and [username] by task "chat"
+        "server" => "r" | "u" | "q" | "t"           # the server should handle tasks such as client rename requested by a client.
+
+    Request Server Tasks:
+    Format: :[task_name] <task_option>
+    In order to request a server task through a client, user should input a message start with a colon mark following with a task name. A task can bring options (if required) separate by whitespaces.
+
+    Available server tasks are:
+        u                    ** Fetch all clients name> **
+        q                    ** Close connection and quit **
+        r <new_name>         ** Rename current client **
+        t <target_username>  ** Send msg to target user **
+
+        The following example demonstrates a client requests to rename itself to "bxzr32":
+            <You> :r bxzr32
+            Your username is bxzr32.
+            <You> 
